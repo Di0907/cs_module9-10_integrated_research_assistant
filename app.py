@@ -14,6 +14,10 @@ from modules.asr import load_asr, transcribe_bytes
 from modules.llm import load_llm
 from modules.tts import synthesize_mp3_async, DEFAULT_VOICE, DEFAULT_RATE, DEFAULT_PITCH
 
+from modules.search_arxiv import search_arxiv
+from modules.calculate import calculate
+
+
 
 # -------------------- helpers: shorten --------------------
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
@@ -148,7 +152,7 @@ def _clean_answer(s: str) -> str:
     s = re.sub(r"[^\w\s.,!?'\-:()]+", "", s)
     return s.strip()
 
-# ---- NEW: debloat filters (remove “As an AI…”、无偏好前缀等) ----
+
 _DEBLOAT_AIPL = re.compile(r"\bAs an (?:AI|artificial intelligence)[^.!\n]*[.!\n]?\s*", re.IGNORECASE)
 _DEBLOAT_PREF = re.compile(r"\bI (?:do not|don't) have personal (?:preferences|opinions)[^.!\n]*[.!\n]?\s*", re.IGNORECASE)
 def _debloat(s: str) -> str:
@@ -210,40 +214,50 @@ async def chat(body: ChatBody):
     if _pipe is None:
         _pipe = load_llm()
 
+    # --- get / create session ---
     session_id, sess = _get_session(body.session_id)
     user_text = (body.text or "").strip()
     _push_history(sess, "user", user_text)
 
+    # --- intent flags / routing switches ---
     is_time = _is_time_question(user_text)
     is_hello = _is_greeting(user_text)
     is_movie = _is_movie_intent(user_text)
 
+    # ---------- 1) Simple rule tools ----------
+    # Time question → direct answer
     if is_time:
         now = datetime.now().strftime("%H:%M")
         assistant_text = f"The current time is {now}."
         _push_history(sess, "assistant", assistant_text)
         return {"text": assistant_text, "session_id": session_id}
 
+    # Greeting → short greeting back
     if is_hello:
         assistant_text = "Hi! I'm good — how can I help?"
         _push_history(sess, "assistant", assistant_text)
         return {"text": assistant_text, "session_id": session_id}
 
+    # Follow-up: asking why we recommended that movie
     if _refers_previous_movie(user_text) and sess.get("last_reco"):
         title = sess["last_reco"]
         assistant_text = (
-            f"I suggested “{title}” because it’s widely praised for its storytelling and emotional impact. "
-            "It’s an easy, high-quality pick for most moods."
+            f"I suggested “{title}” because it is widely praised for its storytelling and emotional impact. "
+            "It is an easy, high-quality pick for most moods."
         )
         _push_history(sess, "assistant", assistant_text)
         return {"text": assistant_text, "session_id": session_id}
 
-    # ---- NEW: quick route for favorite/preference questions ----
+    # Quick answer for “favourite / what do you like”
     if re.search(r"\bfavou?rite\b|\bwhat.?do.?you.?like\b", user_text, re.IGNORECASE):
-        short_ans = "I don’t have personal tastes, but sushi and pizza are among the most popular foods worldwide. What about you?"
+        short_ans = (
+            "I do not have personal tastes, but sushi and pizza are among the most popular foods worldwide. "
+            "What about you?"
+        )
         _push_history(sess, "assistant", short_ans)
         return {"text": short_ans, "session_id": session_id}
 
+    # Movie recommendation
     if is_movie:
         title, blurb = random.choice(MOVIE_RECS)
         assistant_text = f'Try "{title}" — {blurb}.'
@@ -251,7 +265,50 @@ async def chat(body: ChatBody):
         _push_history(sess, "assistant", assistant_text)
         return {"text": assistant_text, "session_id": session_id}
 
-    # default LLM turn
+    # ---- NEW: tools routing for Week 6 ----
+    lower = user_text.lower().strip()
+
+    # Tool 1: calculate(expression)
+    if lower.startswith("calculate "):
+        expr = user_text[len("calculate "):].strip()
+        try:
+            data = calculate(expr)
+            if "result" in data:
+                assistant_text = f"The answer is {data['result']}."
+            else:
+                assistant_text = f"Sorry, I could not compute that: {data.get('error', 'unknown error')}."
+        except Exception as e:
+            assistant_text = f"Calculator failed: {e}"
+        _push_history(sess, "assistant", assistant_text)
+        return {"text": assistant_text, "session_id": session_id}
+
+    # Tool 2: search_arxiv(query)
+    if lower.startswith("search arxiv "):
+        query = user_text[len("search arxiv "):].strip()
+        try:
+            data = search_arxiv(query)
+            if "error" in data:
+                assistant_text = f"Search failed: {data['error']}"
+            else:
+                matches = data.get("matches", [])
+                if not matches:
+                    assistant_text = "No matching arxiv chunks found."
+                else:
+                    lines = []
+                    for c in matches[:3]:
+                        title = c.get("title", "(no title)")
+                        text_snip = c.get("text", "") or ""
+                        if len(text_snip) > 80:
+                            text_snip = text_snip[:80].rstrip() + "..."
+                        lines.append(f"- {title}: {text_snip}")
+                    assistant_text = "Here are some arxiv matches:\n" + "\n".join(lines)
+        except Exception as e:
+            assistant_text = f"Arxiv search failed: {e}"
+
+        _push_history(sess, "assistant", assistant_text)
+        return {"text": assistant_text, "session_id": session_id}
+
+    # ---------- 3) DEFAULT: LLM SMALL-TALK / GENERAL QA ----------
     history_block = ""
     system_rules = (
         "You are a concise, friendly assistant.\n"
@@ -265,6 +322,7 @@ async def chat(body: ChatBody):
         f"User: {user_text}\n"
         "Assistant:"
     )
+
     out = _pipe(
         prompt,
         max_new_tokens=60,
@@ -277,10 +335,10 @@ async def chat(body: ChatBody):
     ans = out.split("Assistant:", 1)[-1]
     ans = re.split(r"\s*(?:User|USER|Assistant|ASSISTANT)\s*:?", ans, maxsplit=1)[0]
     ans = _clean_answer(ans) or "Got it."
-    ans = _debloat(ans)                      # NEW: remove AI/self-disclaimer fluff
+    ans = _debloat(ans)
     ans = _shorten(ans, max_sentences=1, max_chars=90)
 
-    # small-talk boost (if last user message is greeting-like)
+    # small-talk boost
     if sess["history"]:
         last_user_msg = ""
         for role, text in reversed(sess["history"]):
@@ -302,10 +360,11 @@ async def chat(body: ChatBody):
             prev_assistant = text.strip()
             break
     if prev_assistant and ans.strip().lower() == prev_assistant.lower():
-        ans = "Sure—what else can I help with?"
+        ans = "Sure — what else can I help with?"
 
     _push_history(sess, "assistant", ans)
     return {"text": ans, "session_id": session_id}
+
 
 @app.post("/tts")
 async def tts(body: TTSBody) -> Response:
@@ -324,3 +383,13 @@ async def tts(body: TTSBody) -> Response:
         return Response(content=mp3_bytes, media_type="audio/mpeg", headers=headers)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "app:app",           # module_name:variable_name
+        host="127.0.0.1",
+        port=8000,
+        reload=False,        # can set True if you want auto-reload
+    )
+
