@@ -98,6 +98,7 @@ This summary is generated **instantly**, without calling the LLM, ensuring fast 
 ---
 
 ## Project Structure
+```text
 voice-agent/
 │
 ├── app.py
@@ -122,7 +123,7 @@ voice-agent/
 │   ├── index.html            # UI: input box + mic button + Send / End Session payload builder
 │   └── client.js             # Browser logic: record mic, call /asr and /chat, render logs
 └── .gitignore
-
+```
 ---
 
 ## How to Run the System
