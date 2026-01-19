@@ -1,3 +1,4 @@
 .venv/ 
 __pycache__/ 
 .hf_cache/ 
+edge_tts_*.mp3

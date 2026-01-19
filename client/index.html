@@ -1,23 +1,105 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
   <meta charset="utf-8" />
   <title>Voice Agent</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body { font-family: system-ui, sans-serif; margin: 24px; }
-    #log  { width: 100%; height: 260px; }
-    #hold { padding: 8px 14px; }
-    audio { width: 360px; margin-top: 16px; display:block; }
+    body { font-family: system-ui, Arial; margin: 24px; }
+    h1 { margin-bottom: 14px; }
+
+    .bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      max-width: 840px;
+      margin-bottom: 10px;
+    }
+
+    /* Google-like input with inner mic button */
+    .search-container {
+      position: relative;
+      flex: 1;
+      min-width: 280px;
+    }
+
+    #textInput {
+      width: 100%;
+      padding: 14px 48px 14px 14px; /* right padding for mic */
+      font-size: 16px;
+      border-radius: 24px;
+      border: 1px solid #ccc;
+      outline: none;
+      box-sizing: border-box;
+    }
+
+    #textInput:focus {
+      border-color: #4285f4;
+      box-shadow: 0 0 0 1px #4285f4;
+    }
+
+    #micBtn {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      border: none;
+      background: none;
+      font-size: 20px;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    #micBtn.recording {
+      color: red;
+    }
+
+    button {
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .hint { color: #555; margin-bottom: 12px; }
+
+    #log {
+      width: 100%;
+      height: 420px;
+      border: 2px solid #222;
+      padding: 10px;
+      white-space: pre-wrap;
+      overflow: auto;
+      box-sizing: border-box;
+    }
+
+    audio { width: 100%; margin-top: 14px; }
   </style>
 </head>
-<body>
-  <h1>Voice Agent </h1>
-  <button id="hold">Hold to Talk</button>
-  <br/><br/>
-  <textarea id="log" readonly></textarea>
-  <audio id="player" controls></audio>
 
-  <script src="client.js"></script>
+<body>
+  <h1>Voice Agent</h1>
+
+  <div class="bar">
+    <div class="search-container">
+      <input
+        id="textInput"
+        type="text"
+        placeholder='Type here...'
+      />
+      <button id="micBtn" title="Hold to talk">🎤</button>
+    </div>
+
+    <button id="btnSend">Send</button>
+    <button id="btnEnd">End Session</button>
+  </div>
+
+  <div class="hint">
+    Voice is primary; text is a fallback for reliability.
+  </div>
+
+  <div id="log">[Ready]</div>
+
+  <audio id="player" style="display:none;"></audio>
+
+  <script src="/client/client.js"></script>
 </body>
 </html>
